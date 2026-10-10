@@ -1,8 +1,31 @@
+import bcrypt from 'bcrypt';
+import config from 'config';
+import createDebug from 'debug';
+
 import { dbAdapter } from '../models';
 
 import { currentConfig } from './app-async-context';
 
+const debug = createDebug('freefeed:local-auth');
+
+const INVALID_CREDENTIALS_MESSAGE = 'Invalid username or password.';
+
+let dummyHashPromise = null;
+
+function getDummyHash() {
+  if (!dummyHashPromise) {
+    dummyHashPromise = bcrypt.hash(
+      'dummy-password-for-unknown-account',
+      config.performance.bcryptRounds,
+    );
+  }
+
+  return dummyHashPromise;
+}
+
 export async function authenticateUser(username, clearPassword) {
+  const genericFailure = () => ({ error: { message: INVALID_CREDENTIALS_MESSAGE } });
+
   try {
     let user;
 
@@ -12,31 +35,27 @@ export async function authenticateUser(username, clearPassword) {
       user = await dbAdapter.getUserByUsername(username.trim());
     }
 
-    if (user && (await user.isFrozen())) {
+    if (!user || (!user.isActive && !user.isResumable)) {
+      // Unknown or permanently ineligible account: still run one password
+      // comparison against a process-level dummy hash so that the response
+      // does not reveal whether the account exists.
+      await bcrypt.compare(clearPassword, await getDummyHash());
+      return genericFailure();
+    }
+
+    const validPwd = await user.validPassword(clearPassword);
+
+    if (!validPwd) {
+      return genericFailure();
+    }
+
+    if (await user.isFrozen()) {
       const { adminEmail } = currentConfig();
       return {
         error: {
           message:
             'Your account has been suspended due to suspicious activity. ' +
             `Please contact support${adminEmail ? ` at ${adminEmail}` : ''} if you believe this is an error.`,
-        },
-      };
-    }
-
-    if (!user || (!user.isActive && !user.isResumable)) {
-      return {
-        error: { message: 'We could not find the nickname you provided.' },
-      };
-    }
-
-    const validPwd = await user.validPassword(clearPassword);
-
-    if (!validPwd) {
-      return {
-        error: {
-          message: user.isActive
-            ? 'The password you provided does not match the password in our system.'
-            : 'We could not find the nickname you provided.',
         },
       };
     }
@@ -52,9 +71,8 @@ export async function authenticateUser(username, clearPassword) {
     }
 
     return { user };
-  } catch {
-    return {
-      error: { message: 'We could not find the nickname you provided.' },
-    };
+  } catch (err) {
+    debug('authentication failure', err);
+    return genericFailure();
   }
 }

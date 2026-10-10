@@ -1,8 +1,10 @@
 /* global $database, $pg_database */
 import expect from 'unexpected';
+import bcrypt from 'bcrypt';
 import config from 'config';
 import jwt from 'jsonwebtoken';
 import { v4 as uuidv4 } from 'uuid';
+import { spy } from 'sinon';
 
 import cleanDB from '../dbCleaner';
 import { getSingleton } from '../../app/app';
@@ -14,6 +16,7 @@ import {
   sessionTokenV1Store,
   User,
 } from '../../app/models';
+import { GONE_COOLDOWN, GONE_SUSPENDED } from '../../app/models/user';
 import { PubSubAdapter } from '../../app/support/PubSubAdapter';
 
 import { sessionRequest, performJSONRequest } from './functional_test_helper';
@@ -56,16 +59,14 @@ describe('SessionController', () => {
       const resp = await sessionRequest('username', userData.password);
       expect(resp.status, 'to equal', 401);
       const respBody = await resp.json();
-      expect(respBody, 'to satisfy', { err: 'We could not find the nickname you provided.' });
+      expect(respBody, 'to satisfy', { err: 'Invalid username or password.' });
     });
 
     it('should not sign in with an invalid password', async () => {
       const resp = await sessionRequest(userData.username, 'wrong');
       expect(resp.status, 'to equal', 401);
       const respBody = await resp.json();
-      expect(respBody, 'to satisfy', {
-        err: 'The password you provided does not match the password in our system.',
-      });
+      expect(respBody, 'to satisfy', { err: 'Invalid username or password.' });
     });
 
     it('should not sign in with missing username', async () => {
@@ -89,9 +90,7 @@ describe('SessionController', () => {
       const resp = await sessionRequest(userData.username, 'passWorD');
       expect(resp.status, 'to equal', 401);
       const respBody = await resp.json();
-      expect(respBody, 'to satisfy', {
-        err: 'The password you provided does not match the password in our system.',
-      });
+      expect(respBody, 'to satisfy', { err: 'Invalid username or password.' });
     });
 
     it('should sign in with a spaces around username', async () => {
@@ -105,9 +104,7 @@ describe('SessionController', () => {
       const resp = await sessionRequest(userData.username, ` ${userData.password} `);
       expect(resp.status, 'to equal', 401);
       const respBody = await resp.json();
-      expect(respBody, 'to satisfy', {
-        err: 'The password you provided does not match the password in our system.',
-      });
+      expect(respBody, 'to satisfy', { err: 'Invalid username or password.' });
     });
 
     it('should sign in with a email instead of username', async () => {
@@ -141,6 +138,92 @@ describe('SessionController', () => {
         issue: 1,
         userId: user.id,
       });
+    });
+
+    it('should return the uniform error for a nonexistent username', async () => {
+      const resp = await sessionRequest('nosuchuser', 'whatever');
+      expect(resp.status, 'to equal', 401);
+      expect(await resp.json(), 'to equal', { err: 'Invalid username or password.' });
+    });
+
+    it('should return the uniform error for a nonexistent email', async () => {
+      const resp = await sessionRequest('nosuchuser@luna.space', 'whatever');
+      expect(resp.status, 'to equal', 401);
+      expect(await resp.json(), 'to equal', { err: 'Invalid username or password.' });
+    });
+
+    it('should return the uniform error for an active account with a wrong password', async () => {
+      const resp = await sessionRequest(userData.username, 'wrong');
+      expect(resp.status, 'to equal', 401);
+      expect(await resp.json(), 'to equal', { err: 'Invalid username or password.' });
+    });
+
+    it('should not reveal frozen state with a wrong password', async () => {
+      await user.freeze('PT10S');
+
+      const resp = await sessionRequest(userData.username, 'wrong');
+      expect(resp.status, 'to equal', 401);
+      expect(await resp.json(), 'to equal', { err: 'Invalid username or password.' });
+    });
+
+    it('should not reveal resumable state with a wrong password', async () => {
+      await user.setGoneStatus(GONE_COOLDOWN);
+
+      const resp = await sessionRequest(userData.username, 'wrong');
+      expect(resp.status, 'to equal', 401);
+      expect(await resp.json(), 'to equal', { err: 'Invalid username or password.' });
+    });
+
+    it('should return the uniform error for a suspended account with a wrong password', async () => {
+      await user.setGoneStatus(GONE_SUSPENDED);
+
+      const resp = await sessionRequest(userData.username, 'wrong');
+      expect(resp.status, 'to equal', 401);
+      expect(await resp.json(), 'to equal', { err: 'Invalid username or password.' });
+    });
+
+    it('should keep the suspension message for a frozen account with the correct password', async () => {
+      await user.freeze('PT10S');
+
+      const resp = await sessionRequest(userData.username, userData.password);
+      expect(resp.status, 'to equal', 401);
+      const respBody = await resp.json();
+      expect(respBody, 'to satisfy', {
+        err: expect.it('to match', /suspended due to suspicious activity/),
+      });
+      expect(respBody, 'not to have key', 'resumeToken');
+    });
+
+    it('should keep the resume flow for a resumable account with the correct password', async () => {
+      await user.setGoneStatus(GONE_COOLDOWN);
+
+      const resp = await sessionRequest(userData.username, userData.password);
+      expect(resp.status, 'to equal', 401);
+      const respBody = await resp.json();
+      expect(respBody, 'to satisfy', {
+        err: 'Your account is now inactive but you can resume it.',
+        resumeToken: expect.it('to be a string'),
+      });
+    });
+
+    it('should return the uniform error for a suspended account with the correct password', async () => {
+      await user.setGoneStatus(GONE_SUSPENDED);
+
+      const resp = await sessionRequest(userData.username, userData.password);
+      expect(resp.status, 'to equal', 401);
+      expect(await resp.json(), 'to equal', { err: 'Invalid username or password.' });
+    });
+
+    it('should perform one password comparison for unknown and wrong-password logins', async () => {
+      const compareSpy = spy(bcrypt, 'compare');
+
+      try {
+        await sessionRequest('nosuchuser', 'whatever');
+        await sessionRequest(userData.username, 'wrong');
+        expect(compareSpy.callCount, 'to equal', 2);
+      } finally {
+        compareSpy.restore();
+      }
     });
   });
 
