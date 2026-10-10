@@ -406,6 +406,9 @@ config.maxLength = {
 config.passwordReset = {
   tokenBytesLength: 12,
   tokenTTL: 8 * 3600, // in seconds
+  // Queue recovery mail for background delivery; enable only after every
+  // worker knows the PASSWORD_RESET_EMAIL job
+  asyncEmail: false,
   rateLimit: {
     enabled: true,
     perIP: { count: 20, intervalSec: 3600 },

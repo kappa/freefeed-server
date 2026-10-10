@@ -98,6 +98,7 @@ declare module 'config' {
     passwordReset: {
       tokenBytesLength: number;
       tokenTTL: number;
+      asyncEmail: boolean;
       rateLimit: {
         enabled: boolean;
         perIP: { count: number; intervalSec: number };

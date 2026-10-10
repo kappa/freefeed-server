@@ -6,8 +6,10 @@ import expect from 'unexpected';
 import { simpleParser } from 'mailparser';
 
 import cleanDB from '../dbCleaner';
-import { dbAdapter } from '../../app/models';
+import { dbAdapter, JobManager } from '../../app/models';
+import { initHandlers as initPasswordResetHandlers } from '../../app/jobs/password-reset';
 import { SIGN_IN_USER_EXISTS } from '../../app/support/ExtAuth';
+import { withModifiedConfig } from '../helpers/with-modified-config';
 
 import {
   authHeaders,
@@ -551,6 +553,9 @@ describe('Email verification', () => {
 
     describe(`Password reset`, () => {
       const emails = withEmailCapture({ multiple: true });
+      // The worker resolves recipients outside the request, so it reads the
+      // explicit config rather than the patched app config
+      withModifiedConfig({ emailVerification: { enabled: true } });
 
       it('should send password reset links to all users with the same norm. emails', async () => {
         const resp = await performJSONRequest('POST', '/v1/passwords', {
@@ -558,6 +563,9 @@ describe('Email verification', () => {
         });
 
         expect(resp, 'to satisfy', { __httpCode: 200 });
+
+        await processPasswordResetJobs();
+
         expect(emails.current, 'to have length', 2);
         expect(emails.current, 'to have an item satisfying', {
           envelope: { to: ['luna@example.com'] },
@@ -569,3 +577,9 @@ describe('Email verification', () => {
     });
   });
 });
+
+async function processPasswordResetJobs(count = 10) {
+  const jobManager = new JobManager();
+  initPasswordResetHandlers(jobManager);
+  await jobManager.fetchAndProcess(count);
+}

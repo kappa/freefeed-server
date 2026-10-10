@@ -2,6 +2,7 @@ import { dbAdapter } from '../../../models';
 import { UserMailer } from '../../../mailers';
 import { NotFoundException } from '../../../support/exceptions';
 import { admitResetCompletion, admitResetRequest } from '../../../support/password-reset-limits';
+import { enqueuePasswordReset } from '../../../jobs/password-reset';
 
 const GENERIC_RESET_MESSAGE =
   'If an eligible account exists for that address, password reset instructions will be sent.';
@@ -47,12 +48,26 @@ export default class PasswordsController {
 
     if (!admission.allowed) {
       if (admission.scope === 'email') {
+        ctx.set('Cache-Control', 'no-store');
         ctx.status = 200;
         ctx.body = { message: GENERIC_RESET_MESSAGE };
         return;
       }
 
       tooManyResetRequests(ctx, admission.retryAfterSeconds);
+      return;
+    }
+
+    if (ctx.config.passwordReset.asyncEmail) {
+      try {
+        await enqueuePasswordReset(email.trim());
+      } catch {
+        resetServiceUnavailable(ctx);
+        return;
+      }
+
+      ctx.set('Cache-Control', 'no-store');
+      ctx.body = { message: GENERIC_RESET_MESSAGE };
       return;
     }
 
@@ -66,8 +81,12 @@ export default class PasswordsController {
 
     users = users.filter((u) => u?.isActive || u?.isResumable);
 
+    ctx.set('Cache-Control', 'no-store');
+
     if (users.length === 0) {
-      throw new NotFoundException(`Invalid email address or user not found`);
+      ctx.status = 200;
+      ctx.body = { message: GENERIC_RESET_MESSAGE };
+      return;
     }
 
     await Promise.all(
@@ -77,7 +96,7 @@ export default class PasswordsController {
       }),
     );
 
-    ctx.body = { message: `Password reset link has been sent to the specified address` };
+    ctx.body = { message: GENERIC_RESET_MESSAGE };
   }
 
   static async update(ctx) {

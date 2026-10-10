@@ -5,9 +5,10 @@ import { simpleParser } from 'mailparser';
 
 import { getSingleton } from '../../app/app';
 import cleanDB from '../dbCleaner';
-import { dbAdapter, PubSub } from '../../app/models';
+import { dbAdapter, JobManager, PubSub } from '../../app/models';
 import { PubSubAdapter } from '../../app/support/PubSubAdapter';
 import { GONE_SUSPENDED, GONE_COOLDOWN, GONE_DELETED } from '../../app/models/user';
+import { initHandlers as initPasswordResetHandlers } from '../../app/jobs/password-reset';
 import { addMailListener } from '../../lib/mailer';
 import { EVENT_TYPES } from '../../app/support/EventTypes';
 
@@ -692,6 +693,8 @@ describe('Gone users', () => {
       const resp = await performJSONRequest('POST', `/v1/passwords`, { email });
       expect(resp, 'to satisfy', { __httpCode: 200 });
 
+      await processPasswordResetJobs();
+
       expect(capturedMail, 'to satisfy', { envelope: { to: [email] } });
       const parsedMail = await simpleParser(capturedMail.response);
       expect(parsedMail, 'to satisfy', { subject: config.mailer.resetPasswordMailSubject });
@@ -724,4 +727,10 @@ describe('Gone users', () => {
 async function setGoneStatus(userCtx, status) {
   const user = await dbAdapter.getUserById(userCtx.user.id);
   await user.setGoneStatus(status);
+}
+
+async function processPasswordResetJobs(count = 10) {
+  const jobManager = new JobManager();
+  initPasswordResetHandlers(jobManager);
+  await jobManager.fetchAndProcess(count);
 }

@@ -39,6 +39,7 @@ export class User {
   isPrivate: '0' | '1';
   profilePictureLargeUrl: string;
   readonly isActive: boolean;
+  readonly isResumable: boolean;
   type: 'user';
   invitationId: number | null;
   goneStatus: keyof typeof GONE_NAMES | null;
@@ -48,6 +49,7 @@ export class User {
   create(): Promise<this>;
   update(params: unknown): Promise<void>;
   setGoneStatus(status: keyof typeof GONE_NAMES | null): Promise<void>;
+  updateResetPasswordToken(): Promise<string>;
   ban(usernames: string): Promise<1>;
   unban(usernames: string): Promise<1>;
   subscribeTo(

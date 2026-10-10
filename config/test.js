@@ -62,6 +62,8 @@ export default {
   },
 
   // The shared loopback bucket would otherwise throttle the legacy password
-  // tests; suites covering the limits enable them explicitly per describe block
-  passwordReset: { rateLimit: { enabled: false } },
+  // tests; suites covering the limits enable them explicitly per describe block.
+  // Recovery mail is queued; suites asserting delivery process the queue
+  // explicitly, and both asyncEmail states are covered in passwords.js.
+  passwordReset: { asyncEmail: true, rateLimit: { enabled: false } },
 };

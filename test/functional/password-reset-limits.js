@@ -4,9 +4,10 @@ import expect from 'unexpected';
 import cleanDB from '../dbCleaner';
 import { getSingleton } from '../../app/app';
 import { DummyPublisher } from '../../app/pubsub';
-import { dbAdapter, PubSub } from '../../app/models';
+import { dbAdapter, JobManager, PubSub } from '../../app/models';
 import database from '../../app/setup/database';
 import { passwordResetKeys } from '../../app/support/password-reset-limits';
+import { initHandlers as initPasswordResetHandlers } from '../../app/jobs/password-reset';
 
 import {
   createUserAsync,
@@ -94,6 +95,7 @@ describe('Password reset limits', () => {
 
     const first = await performJSONRequest('POST', '/v1/passwords', { email });
     expect(first, 'to satisfy', { __httpCode: 200 });
+    await processPasswordResetJobs();
     expect(emails.current, 'to have length', 1);
     const admittedToken = await tokenOf();
     expect(admittedToken, 'to be a string');
@@ -110,7 +112,7 @@ describe('Password reset limits', () => {
     for (const email of flood.slice(0, 5)) {
       // eslint-disable-next-line no-await-in-loop
       const resp = await performJSONRequest('POST', '/v1/passwords', { email });
-      expect(resp, 'to satisfy', { __httpCode: 404 });
+      expect(resp, 'to satisfy', { __httpCode: 200, message: GENERIC_MESSAGE });
     }
 
     const resp = await performRequest('/v1/passwords', {
@@ -145,7 +147,7 @@ describe('Password reset limits', () => {
         { email: flood[i] },
         forged[i],
       );
-      expect(resp, 'to satisfy', { __httpCode: 404 });
+      expect(resp, 'to satisfy', { __httpCode: 200, message: GENERIC_MESSAGE });
     }
 
     const resp = await performJSONRequest('POST', '/v1/passwords', { email: flood[5] }, forged[5]);
@@ -166,6 +168,7 @@ describe('Password reset limits', () => {
       { Authorization: 'Bearer invalid' },
     );
     expect(resp, 'to satisfy', { __httpCode: 200 });
+    await processPasswordResetJobs();
     expect(emails.current, 'to have length', 1);
   });
 
@@ -192,7 +195,8 @@ describe('Password reset limits', () => {
     const email = EMAILS.unknown;
 
     const first = await performJSONRequest('POST', '/v1/passwords', { email });
-    expect(first, 'to satisfy', { __httpCode: 404 });
+    expect(first, 'to satisfy', { __httpCode: 200, message: GENERIC_MESSAGE });
+    await processPasswordResetJobs();
 
     const second = await performJSONRequest('POST', '/v1/passwords', { email });
     expect(second, 'to satisfy', { __httpCode: 200, message: GENERIC_MESSAGE });
@@ -212,3 +216,9 @@ describe('Password reset limits', () => {
     expect(resp, 'to satisfy', { __httpCode: 400 });
   });
 });
+
+async function processPasswordResetJobs(count = 10) {
+  const jobManager = new JobManager();
+  initPasswordResetHandlers(jobManager);
+  await jobManager.fetchAndProcess(count);
+}
