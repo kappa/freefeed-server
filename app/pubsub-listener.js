@@ -504,7 +504,7 @@ export default class PubsubListener {
   onCommentUpdate = async (data) => {
     const comment = await dbAdapter.getCommentById(data.commentId);
 
-    if (!comment || comment.to_delete) {
+    if (!comment || comment.toDelete) {
       return;
     }
 
