@@ -130,4 +130,17 @@ describe('Common API routing', () => {
       await fs.unlink(messageFile);
     }
   });
+
+  it(`should return safe JSON error for malformed JSON body`, async () => {
+    const resp = await fetch(`${app.context.config.host}/v1/session`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{"broken": xxx, "authToken": "funcsecret08"}',
+    });
+    const text = await resp.text();
+
+    expect(resp.status, 'to be', 400);
+    expect(text, 'to be', JSON.stringify({ err: 'Bad Request' }));
+    expect(text, 'not to contain', 'funcsecret08');
+  });
 });

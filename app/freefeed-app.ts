@@ -17,7 +17,7 @@ import pkg from '../package.json' with { type: 'json' };
 import { koaServerTiming } from './support/koa-server-timing';
 import { originMiddleware } from './setup/initializers/origin';
 import { maintenanceCheck } from './support/maintenance';
-import { reportError } from './support/exceptions';
+import { outerErrorMiddleware, reportError } from './support/exceptions';
 import { normalizeInputStrings } from './controllers/middlewares/normalize-input';
 import { type AppContext } from './support/types';
 import { apiVersionMiddleware } from './setup/initializers/api-version';
@@ -42,6 +42,11 @@ class FreefeedApp extends Application<DefaultState, AppContext> {
 
     this.context.config = config;
     this.context.port = process.env.PORT ? parseInt(process.env.PORT) : config.port;
+
+    // First: adapt failures thrown before the main error handler below (body
+    // parsing, static serving). The main handler stays after requestId so
+    // application errors keep their request IDs.
+    this.use(outerErrorMiddleware);
 
     this.use(asyncContextMiddleware);
 

@@ -687,7 +687,7 @@ export function addModel(dbAdapter) {
       const timelineId = await dbAdapter.getUserNamedFeedId(this.id, name);
 
       if (!timelineId) {
-        console.log(`Timeline '${name}' not found for user`, this);
+        console.log(`Timeline '${name}' not found for user ${this.id}`);
         return null;
       }
 
