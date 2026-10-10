@@ -1,5 +1,6 @@
 /* eslint-disable you-dont-need-lodash-underscore/is-undefined */
 import http from 'http';
+import net from 'net';
 import { stringify as qsStringify } from 'querystring';
 import util from 'util';
 import { readFile } from 'fs/promises';
@@ -12,6 +13,7 @@ import expect from 'unexpected';
 import Application from 'koa';
 
 import { dbAdapter, sessionTokenV1Store, User, Group } from '../../app/models';
+import { setSafeOutboundTestHooks } from '../../app/support/safe-outbound-request';
 import { getSingleton as initApp } from '../../app/app';
 import { addMailListener } from '../../lib/mailer';
 import { API_VERSION_2, API_VERSION_3, API_VERSION_ACTUAL } from '../../app/api-versions';
@@ -1262,6 +1264,41 @@ export function withModifiedAppConfig(patch) {
     app.context.config = prevConfig;
   });
 }
+
+/**
+ * Run tests in 'describe' block with the given public-looking hostname mapped
+ * to the local loopback fixture through the safe-outbound test seam. The fake
+ * DNS answer is a global unicast placeholder that the tests never actually
+ * dial: the connector seam redirects the socket to 127.0.0.1. Dials for any
+ * other hostname fail loudly. Use it only in 'describe', not in test
+ * functions!
+ *
+ * @param {string} hostname
+ */
+export function withSafeOutboundFixture(hostname) {
+  before(() => {
+    setSafeOutboundTestHooks({
+      resolveHost: (name) => Promise.resolve(name === hostname ? ['93.184.216.34'] : null),
+      createConnection: (address, port, name) => {
+        if (name !== hostname) {
+          throw new Error(`Unexpected test dial: ${name}`);
+        }
+
+        return net.connect({ host: '127.0.0.1', port });
+      },
+    });
+  });
+
+  after(() => {
+    setSafeOutboundTestHooks(null);
+  });
+}
+
+/**
+ * Builds the public-looking base URL for a local fixture server whose
+ * hostname is mapped by withSafeOutboundFixture.
+ */
+export const safeOutboundFixtureOrigin = (server, hostname) => `http://${hostname}:${server.port}`;
 
 /**
  * Capture sent emails for all tests in 'describe' block. Use it only in

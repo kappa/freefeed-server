@@ -63,3 +63,7 @@ export class MockHTTPServer {
   start(): Promise<void>;
   stop(): Promise<void>;
 }
+
+export function withSafeOutboundFixture(hostname: string): void;
+
+export function safeOutboundFixtureOrigin(server: MockHTTPServer, hostname: string): string;

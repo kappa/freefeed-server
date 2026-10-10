@@ -24,6 +24,8 @@ import {
   performJSONRequest,
   createUserAsyncPost,
   authHeaders,
+  safeOutboundFixtureOrigin,
+  withSafeOutboundFixture,
 } from '../functional/functional_test_helper';
 import { GONE_SUSPENDED } from '../../app/models/user';
 
@@ -380,6 +382,11 @@ describe('UsersControllerV2', () => {
     // Will not test all corner cases here because they are tested in bookmarklet controller test.
     // Just ensure that the userpic-by-url is worked.
 
+    const fixtureHost = 'userpic-fixture.test';
+    const fixtureOrigin = () => safeOutboundFixtureOrigin(server, fixtureHost);
+
+    withSafeOutboundFixture(fixtureHost);
+
     const server = new MockHTTPServer((ctx) => {
       ctx.status = 200;
       ctx.response.type = 'image/gif';
@@ -403,7 +410,7 @@ describe('UsersControllerV2', () => {
       const resp = await performJSONRequest(
         'POST',
         '/v1/users/updateProfilePicture',
-        { url: `${server.origin}/image.gif` },
+        { url: `${fixtureOrigin()}/image.gif` },
         { Authorization: `Bearer ${luna.authToken}` },
       );
 
@@ -414,7 +421,7 @@ describe('UsersControllerV2', () => {
       const resp = await performJSONRequest(
         'POST',
         '/v1/groups/selenites/updateProfilePicture',
-        { url: `${server.origin}/image.gif` },
+        { url: `${fixtureOrigin()}/image.gif` },
         { Authorization: `Bearer ${luna.authToken}` },
       );
 
@@ -436,6 +443,11 @@ describe('UsersControllerV2', () => {
     });
 
     describe('create user with profile picture by URL', () => {
+      const fixtureHost = 'userpic-fixture.test';
+      const fixtureOrigin = () => safeOutboundFixtureOrigin(server, fixtureHost);
+
+      withSafeOutboundFixture(fixtureHost);
+
       const server = new MockHTTPServer((ctx) => {
         ctx.status = 200;
         ctx.response.type = 'image/gif';
@@ -453,7 +465,7 @@ describe('UsersControllerV2', () => {
         const resp = await performJSONRequest('POST', '/v1/users', {
           username: 'luna',
           password: 'password',
-          profilePictureURL: `${server.origin}/image.gif`,
+          profilePictureURL: `${fixtureOrigin()}/image.gif`,
         });
         expect(resp, 'to satisfy', {
           __httpCode: 200,

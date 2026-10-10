@@ -1,11 +1,14 @@
-import { Readable } from 'stream';
-import { ReadableStream } from 'stream/web';
-
 import { type Context } from 'koa';
 import { Duration } from 'luxon';
 
 import { ForbiddenException, ValidationException } from '../../../support/exceptions';
 import { currentConfig } from '../../../support/app-async-context';
+import {
+  SAFE_OUTBOUND_MAX_REDIRECTS,
+  SafeOutboundError,
+  isAllowedByPrefixes,
+  safeOutboundRequest,
+} from '../../../support/safe-outbound-request';
 
 const fallbackTimeoutMs = 1000;
 
@@ -15,6 +18,7 @@ export async function proxy(ctx: Context) {
     allowedOrigins,
     allowedUrlPrefixes,
     allowLocalhostOrigins,
+    maxResponseBytes,
   } = currentConfig().corsProxy;
 
   const { origin } = ctx.headers;
@@ -47,18 +51,53 @@ export async function proxy(ctx: Context) {
     throw new ValidationException("Missing 'url' parameter");
   }
 
-  // Check if the URL has allowed prefix
-  if (!allowedUrlPrefixes.some((prefix) => url.startsWith(prefix))) {
+  // Exact origin-plus-path match against the configured prefixes. The same
+  // predicate runs again on every redirect target inside the transport.
+  if (url.includes('\\')) {
+    throw new ValidationException('URL not allowed');
+  }
+
+  let candidate: URL;
+
+  try {
+    candidate = new URL(url);
+  } catch {
+    throw new ValidationException('URL not allowed');
+  }
+
+  if (!isAllowedByPrefixes(candidate, allowedUrlPrefixes)) {
     throw new ValidationException('URL not allowed');
   }
 
   const timeoutDuration = Duration.fromISO(timeoutString);
   const timeoutMs = timeoutDuration.isValid ? timeoutDuration.toMillis() : fallbackTimeoutMs;
 
-  // Perform the request with timeout
-  const response = await fetch(url, {
-    headers: { 'Accept-Encoding': 'identity' },
-    signal: AbortSignal.timeout(timeoutMs),
+  // Perform the request with timeout. Redirects are followed manually: each
+  // hop rechecks the URL prefixes and the public-destination policy.
+  let response;
+
+  try {
+    response = await safeOutboundRequest(candidate, {
+      timeoutMs,
+      maxRedirects: SAFE_OUTBOUND_MAX_REDIRECTS,
+      maxBytes: maxResponseBytes,
+      allowURL: (next: URL) => isAllowedByPrefixes(next, allowedUrlPrefixes),
+    });
+  } catch (e) {
+    if (e instanceof SafeOutboundError && (e.code === 'policy' || e.code === 'redirect')) {
+      throw new ValidationException('URL not allowed');
+    }
+
+    throw e;
+  }
+
+  // Abort the upstream request if the client goes away. The outgoing
+  // response (not the already-received request) observes the disconnect.
+  const onResClose = () => response.cancel();
+  ctx.res.on('close', onResClose);
+  // Upstream is already torn down once the body closes; stop listening.
+  response.body.on('close', () => {
+    ctx.res.off('close', onResClose);
   });
 
   // Copying to the client:
@@ -66,13 +105,14 @@ export async function proxy(ctx: Context) {
   ctx.status = response.status;
 
   // 2. Some of response headers that we want to pass to the client
-  for (const header of ['Location', 'Content-Type', 'Content-Length']) {
-    if (response.headers.has(header)) {
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-      ctx.set(header, response.headers.get(header)!);
+  for (const header of ['location', 'content-type', 'content-length', 'content-encoding']) {
+    const value = response.headers[header];
+
+    if (value !== undefined) {
+      ctx.set(header, Array.isArray(value) ? value.join(', ') : value);
     }
   }
 
   // 3. And the response body itself
-  ctx.body = response.body ? Readable.fromWeb(response.body as ReadableStream) : null;
+  ctx.body = response.body;
 }

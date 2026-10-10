@@ -15,6 +15,8 @@ import {
   createGroupAsync,
   createTestUser,
   MockHTTPServer,
+  safeOutboundFixtureOrigin,
+  withSafeOutboundFixture,
 } from './functional_test_helper';
 import { postResponse } from './schemaV2-helper';
 import Session from './realtime-session';
@@ -112,6 +114,11 @@ describe('BookmarkletController', () => {
     });
 
     describe('Attachments', () => {
+      const fixtureHost = 'bookmarklet-fixture.test';
+      const fixtureOrigin = () => safeOutboundFixtureOrigin(server, fixtureHost);
+
+      withSafeOutboundFixture(fixtureHost);
+
       const server = new MockHTTPServer((ctx) => {
         const {
           request: { url },
@@ -147,7 +154,7 @@ describe('BookmarkletController', () => {
       it(`should create post with the image attachment`, async () => {
         const result = await callBookmarklet(luna, {
           title: 'Post',
-          image: `${server.origin}/image.jpg`,
+          image: `${fixtureOrigin()}/image.jpg`,
         });
         expect(result.attachments, 'to satisfy', [{ fileName: 'image.jpg' }]);
       });
@@ -162,7 +169,7 @@ describe('BookmarkletController', () => {
 
         const result = await callBookmarklet(luna, {
           title: 'Post',
-          images: fileNames.map((name) => `${server.origin}/${name}`),
+          images: fileNames.map((name) => `${fixtureOrigin()}/${name}`),
         });
         expect(
           result.attachments,
@@ -181,7 +188,7 @@ describe('BookmarkletController', () => {
 
         const call = callBookmarklet(luna, {
           title: 'Post',
-          images: fileNames.map((name) => `${server.origin}/${name}`),
+          images: fileNames.map((name) => `${fixtureOrigin()}/${name}`),
         });
         await expect(call, 'to be rejected with', /^HTTP error 422:/);
       });
@@ -189,7 +196,7 @@ describe('BookmarkletController', () => {
       it(`should not create post with non-image attachment`, async () => {
         const call = callBookmarklet(luna, {
           title: 'Post',
-          images: [`${server.origin}/image.txt`],
+          images: [`${fixtureOrigin()}/image.txt`],
         });
         await expect(call, 'to be rejected with', /^HTTP error 403:/);
       });
@@ -197,7 +204,7 @@ describe('BookmarkletController', () => {
       it(`should not create post with unexistent attachment`, async () => {
         const call = callBookmarklet(luna, {
           title: 'Post',
-          images: [`${server.origin}/image.pdf`],
+          images: [`${fixtureOrigin()}/image.pdf`],
         });
         await expect(call, 'to be rejected with', /^HTTP error 403:/);
       });
@@ -205,7 +212,7 @@ describe('BookmarkletController', () => {
       it(`should not create post with image and non-image attachment`, async () => {
         const call = callBookmarklet(luna, {
           title: 'Post',
-          images: [`${server.origin}/image1.jpg`, `${server.origin}/image2.txt`],
+          images: [`${fixtureOrigin()}/image1.jpg`, `${fixtureOrigin()}/image2.txt`],
         });
         await expect(call, 'to be rejected with', /^HTTP error 403:/);
       });
@@ -213,7 +220,7 @@ describe('BookmarkletController', () => {
       it(`should not create post with attachment with very large Content-Length`, async () => {
         const call = callBookmarklet(luna, {
           title: 'Post',
-          images: [`${server.origin}/big-cl.jpg`],
+          images: [`${fixtureOrigin()}/big-cl.jpg`],
         });
         await expect(call, 'to be rejected with', /^HTTP error 403:/);
       });
@@ -221,7 +228,7 @@ describe('BookmarkletController', () => {
       it(`should not create post with very large attachment without Content-Length`, async () => {
         const call = callBookmarklet(luna, {
           title: 'Post',
-          images: [`${server.origin}/big-body.jpg`],
+          images: [`${fixtureOrigin()}/big-body.jpg`],
         });
         await expect(call, 'to be rejected with', /^HTTP error 403:/);
       });
@@ -229,7 +236,7 @@ describe('BookmarkletController', () => {
       it(`should create post with unescaped unicode image URL`, async () => {
         const result = await callBookmarklet(luna, {
           title: 'Post',
-          image: `${server.origin}/imåge.png`,
+          image: `${fixtureOrigin()}/imåge.png`,
         });
         expect(result.attachments, 'to have length', 1);
         expect(result.attachments, 'to satisfy', [{ fileName: 'imåge.png' }]);

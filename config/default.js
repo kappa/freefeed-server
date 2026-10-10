@@ -557,6 +557,8 @@ config.corsProxy = {
   allowLocalhostOrigins: true,
   // The allowlist of proxied URL prefixes.
   allowedUrlPrefixes: [],
+  // Maximum proxied response body size in bytes.
+  maxResponseBytes: 2 * 1024 * 1024,
 };
 
 config.dailyMails = {

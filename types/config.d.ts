@@ -207,6 +207,7 @@ declare module 'config' {
       allowedOrigins: string[];
       allowedUrlPrefixes: string[];
       allowLocalhostOrigins: boolean;
+      maxResponseBytes: number;
     };
 
     dailyMails: Record<
