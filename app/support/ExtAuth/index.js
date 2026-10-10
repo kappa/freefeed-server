@@ -4,6 +4,7 @@ import { merge } from 'lodash-es';
 import { Cache } from './Cache';
 import { TestAdapter } from './TestAdapter';
 import { OAuth2Adapter } from './OAuth2Adapter';
+import { validateExternalAuthProviders } from './validate-providers';
 
 export {
   MODE_CONNECT,
@@ -36,6 +37,8 @@ export const allExternalProviders = config.externalAuthProviders.map(({ template
   return cfg;
 });
 
+validateExternalAuthProviders(allExternalProviders, process.env.NODE_ENV);
+
 export function getAuthProvider(provId) {
   const conf = allExternalProviders.find((p) => p.id === provId);
 
@@ -53,6 +56,8 @@ export function getAuthProvider(provId) {
 }
 
 const adapterByName = {
-  test: TestAdapter,
   oauth2: OAuth2Adapter,
+  // Second guard: the identity-trusting test adapter exists only in tests.
+  // Misconfigured non-test environments already fail above with a clear error.
+  ...(process.env.NODE_ENV === 'test' ? { test: TestAdapter } : {}),
 };
