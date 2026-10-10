@@ -60,4 +60,8 @@ export default {
     service: 'test',
     serviceTitle: 'Test',
   },
+
+  // The shared loopback bucket would otherwise throttle the legacy password
+  // tests; suites covering the limits enable them explicitly per describe block
+  passwordReset: { rateLimit: { enabled: false } },
 };

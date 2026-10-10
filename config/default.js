@@ -406,6 +406,13 @@ config.maxLength = {
 config.passwordReset = {
   tokenBytesLength: 12,
   tokenTTL: 8 * 3600, // in seconds
+  rateLimit: {
+    enabled: true,
+    perIP: { count: 20, intervalSec: 3600 },
+    perEmail: { count: 5, intervalSec: 3600 },
+    emailCooldownSec: 60,
+    completionPerIP: { count: 30, intervalSec: 900 },
+  },
 };
 
 config.shortLinks = {

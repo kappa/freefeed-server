@@ -1,15 +1,58 @@
 import { dbAdapter } from '../../../models';
 import { UserMailer } from '../../../mailers';
 import { NotFoundException } from '../../../support/exceptions';
+import { admitResetCompletion, admitResetRequest } from '../../../support/password-reset-limits';
+
+const GENERIC_RESET_MESSAGE =
+  'If an eligible account exists for that address, password reset instructions will be sent.';
+
+/** @param {import('../../../support/types').Ctx} ctx */
+function tooManyResetRequests(ctx, retryAfterSeconds) {
+  ctx.set('Retry-After', String(retryAfterSeconds));
+  ctx.status = 429;
+  ctx.body = { err: 'Too many password reset requests. Please try again later.' };
+}
+
+/** @param {import('../../../support/types').Ctx} ctx */
+function resetServiceUnavailable(ctx) {
+  ctx.status = 503;
+  ctx.body = { err: 'Password reset is temporarily unavailable. Please try again later.' };
+}
 
 export default class PasswordsController {
   /** @param {import('../../../support/types').Ctx} ctx */
   static async create(ctx) {
     const { email } = ctx.request.body;
 
-    if (email == null || email.length == 0) {
+    if (typeof email !== 'string' || email.trim().length === 0) {
       ctx.status = 400;
       ctx.body = { err: 'Email cannot be blank' };
+      return;
+    }
+
+    if (email.trim().length > 254) {
+      ctx.status = 400;
+      ctx.body = { err: 'Email is too long' };
+      return;
+    }
+
+    let admission;
+
+    try {
+      admission = await admitResetRequest(email.trim(), ctx.ip);
+    } catch {
+      resetServiceUnavailable(ctx);
+      return;
+    }
+
+    if (!admission.allowed) {
+      if (admission.scope === 'email') {
+        ctx.status = 200;
+        ctx.body = { message: GENERIC_RESET_MESSAGE };
+        return;
+      }
+
+      tooManyResetRequests(ctx, admission.retryAfterSeconds);
       return;
     }
 
@@ -43,6 +86,20 @@ export default class PasswordsController {
     if (token == null || token.length == 0) {
       ctx.status = 400;
       ctx.body = { err: 'Token cannot be blank' };
+      return;
+    }
+
+    let admission;
+
+    try {
+      admission = await admitResetCompletion(ctx.ip);
+    } catch {
+      resetServiceUnavailable(ctx);
+      return;
+    }
+
+    if (!admission.allowed) {
+      tooManyResetRequests(ctx, admission.retryAfterSeconds);
       return;
     }
 

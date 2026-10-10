@@ -98,6 +98,13 @@ declare module 'config' {
     passwordReset: {
       tokenBytesLength: number;
       tokenTTL: number;
+      rateLimit: {
+        enabled: boolean;
+        perIP: { count: number; intervalSec: number };
+        perEmail: { count: number; intervalSec: number };
+        emailCooldownSec: number;
+        completionPerIP: { count: number; intervalSec: number };
+      };
     };
 
     shortLinks: {
