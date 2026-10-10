@@ -11,6 +11,7 @@ import { Address } from '../../support/ipv6';
 import { database } from '../common';
 import { NotAuthorizedException } from '../../support/exceptions';
 import { createBase32Code, normalizeBase32Code } from '../../support/base32-codes';
+import { safeRequestPath } from '../../support/safe-request-summary';
 
 import { AuthToken } from './AuthToken';
 import { type AppTokenRecord } from './types';
@@ -171,7 +172,7 @@ export class AppTokenV1 extends AuthToken {
 
     const payload = {
       token_id: this.id,
-      request: `${ctx.method} ${ctx.url}`,
+      request: `${ctx.method} ${safeRequestPath(ctx.url)}`,
       ip: ctx.ip,
       user_agent: ctx.headers['user-agent'] || '',
       extra: {

@@ -23,6 +23,7 @@ import { type AppContext } from './support/types';
 import { apiVersionMiddleware } from './setup/initializers/api-version';
 import { asyncContextMiddleware } from './support/app-async-context';
 import { nodeDirname } from './support/node-dirname';
+import { safeRequestPath, safeRequestSummary } from './support/safe-request-summary';
 
 const __dirname = nodeDirname(import.meta.url);
 
@@ -79,8 +80,17 @@ class FreefeedApp extends Application<DefaultState, AppContext> {
       await next();
     });
 
+    // Access log without query strings, Referer or reset tokens; the request ID
+    // lets entries be correlated with diagnostics
+    morgan.token('safe-url', (req) => safeRequestPath(req.url ?? ''));
     const accessLogStream = fs.createWriteStream(`${__dirname}/../log/${env}.log`, { flags: 'a' });
-    this.use(morgan('combined', { stream: accessLogStream }));
+    this.use(
+      morgan(
+        ':remote-addr - :remote-user [:date[clf]] ":method :safe-url HTTP/:http-version"' +
+          ' :status :res[content-length] :res[X-Request-Id] ":user-agent" :response-time ms',
+        { stream: accessLogStream },
+      ),
+    );
 
     if (config.logResponseTime) {
       // should be located BEFORE responseTime
@@ -89,7 +99,8 @@ class FreefeedApp extends Application<DefaultState, AppContext> {
         await next();
 
         const time = ctx.response.get('X-Response-Time');
-        const resource = (ctx.request.method + ctx.request.url).toLowerCase();
+        const { method, path } = safeRequestSummary(ctx);
+        const resource = (method + path).toLowerCase();
 
         timeLogger(resource, time);
       });

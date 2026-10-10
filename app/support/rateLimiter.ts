@@ -9,6 +9,7 @@ import createDebug from 'debug';
 import { Duration } from 'luxon';
 
 import { TooManyRequestsException } from './exceptions';
+import { safeRequestPath } from './safe-request-summary';
 
 const debug = createDebug('freefeed:rateLimiter');
 
@@ -94,7 +95,7 @@ export async function rateLimiterMiddleware(ctx: Context, next: Next) {
   monitor.increment('requests', 1, requestTags);
 
   debug(
-    `${requestId}: ${requestMethod} ${ctx.request.originalUrl} request from ${realClientId} (${authTokenType})`,
+    `${requestId}: ${requestMethod} ${safeRequestPath(ctx.request.originalUrl)} request from ${realClientId} (${authTokenType})`,
   );
 
   if (rateLimitConfig.enabled) {

@@ -26,6 +26,8 @@ export function performJSONRequest(
   header?: Record<string, string>,
 ): Promise<{ __httpCode: number }>;
 
+export function performRequest(relativePath: string, params?: RequestInit): Promise<Response>;
+
 export function authHeaders(userCtx: Pick<UserCtx, 'authToken'> | null): {
   Authorization?: `Bearer ${string}`;
 };

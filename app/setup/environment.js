@@ -5,6 +5,7 @@ import createDebug from 'debug';
 import config from 'config';
 
 import { currentConfig } from '../support/app-async-context';
+import { sanitizeRavenData } from '../support/safe-request-summary';
 
 import { setSearchConfig as setPostgresSearchConfig } from './postgres';
 import { addLogglyToDebug } from './loggly';
@@ -29,7 +30,10 @@ if (process.env.NODE_ENV !== 'test') {
 const sentryIsEnabled = 'sentryDsn' in config;
 
 if (sentryIsEnabled) {
-  Raven.config(config.sentryDsn, { autoBreadcrumbs: true }).install();
+  Raven.config(config.sentryDsn, {
+    autoBreadcrumbs: true,
+    dataCallback: sanitizeRavenData,
+  }).install();
 }
 
 const log = createDebug('freefeed:init');
