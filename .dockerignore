@@ -1,0 +1,20 @@
+# Build context hygiene: local secrets, credentials, logs and generated
+# artifacts must never enter image layers. Keep .yarn/releases and
+# .yarn/plugins: the configured Yarn 4 needs them at build time.
+.git
+node_modules
+log/*
+coverage
+security-scan
+.env*
+config/local*
+config/welcome-directs/local*
+public/files/attachments/*
+*.pem
+*.key
+.codex
+.agents
+.aws
+# Editor state (mirrors .gitignore)
+.vscode
+.idea
