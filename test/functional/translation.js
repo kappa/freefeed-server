@@ -2,6 +2,7 @@
 /* global $pg_database */
 import expect from 'unexpected';
 import { spy, stub } from 'sinon';
+import monitor from 'monitor-dog';
 
 import cleanDB from '../dbCleaner';
 import { dbAdapter } from '../../app/models';
@@ -261,14 +262,126 @@ describe('Text translation', () => {
       afterEach(() => fetchStub.restore());
 
       it(`should keep the reservation charged`, async () => {
-        expect(await translatePost(post.id, mars), 'to satisfy', { __httpCode: 500 });
-        expect(
-          await dbAdapter.getTranslationUsage({ userId: mars.user.id, period: 'day' }),
-          'to be',
-          11,
-        );
-        expect(await dbAdapter.getTranslationUsage({ period: 'month' }), 'to be', 11);
+        const incrementStub = stub(monitor, 'increment');
+
+        try {
+          expect(await translatePost(post.id, mars), 'to satisfy', { __httpCode: 500 });
+          expect(
+            await dbAdapter.getTranslationUsage({ userId: mars.user.id, period: 'day' }),
+            'to be',
+            11,
+          );
+          expect(await dbAdapter.getTranslationUsage({ period: 'month' }), 'to be', 11);
+
+          const tags = capturedTranslationTags(incrementStub);
+          expect(tags.length, 'to be', 2);
+
+          for (const t of tags) {
+            expect(t, 'to satisfy', { targetLang: 'en', detectedLang: 'unknown' });
+          }
+        } finally {
+          incrementStub.restore();
+        }
       });
+    });
+  });
+
+  describe('Metric labels', () => {
+    withModifiedAppConfig({
+      translation: {
+        limits: {
+          userCharactersPerDay: 20,
+        },
+      },
+    });
+
+    beforeEach(() => dbAdapter.cache.clear());
+
+    it(`should emit finite labels for a regional tag`, async () => {
+      const incrementStub = stub(monitor, 'increment');
+
+      try {
+        expect(await translatePost(post.id, mars, 'ru-RU'), 'to satisfy', {
+          __httpCode: 200,
+          translatedText: 'tsop a tsuJ',
+          detectedLang: 'UR-ur',
+        });
+
+        const tags = capturedTranslationTags(incrementStub);
+        expect(tags.length, 'to be', 2);
+
+        for (const t of tags) {
+          expect(t, 'to satisfy', { targetLang: 'ru', detectedLang: 'other' });
+        }
+      } finally {
+        incrementStub.restore();
+      }
+    });
+
+    it(`should keep serving valid but unknown tags with bounded labels`, async () => {
+      const incrementStub = stub(monitor, 'increment');
+
+      try {
+        // 'xx' is syntactically valid but supports no provider behavior change
+        expect(await translatePost(post.id, mars, 'xx'), 'to satisfy', {
+          __httpCode: 200,
+          translatedText: 'tsop a tsuJ',
+          detectedLang: 'xx',
+        });
+
+        const tags = capturedTranslationTags(incrementStub);
+        expect(tags.length, 'to be', 2);
+
+        for (const t of tags) {
+          expect(t, 'to satisfy', { targetLang: 'other', detectedLang: 'other' });
+        }
+      } finally {
+        incrementStub.restore();
+      }
+    });
+
+    it(`should emit bounded labels on quota denial`, async () => {
+      const incrementStub = stub(monitor, 'increment');
+
+      try {
+        expect(await translatePost(post.id, mars), 'to satisfy', { __httpCode: 200 });
+        await dbAdapter.cache.clear();
+        incrementStub.resetHistory();
+
+        // 'Just a post' is 11 chars, so this exceeds the 20-char budget
+        expect(await translatePost(post.id, mars), 'to satisfy', { __httpCode: 403 });
+
+        const tags = capturedTranslationTags(incrementStub);
+        expect(tags.length, 'to be', 2);
+
+        for (const t of tags) {
+          expect(t, 'to satisfy', {
+            targetLang: 'en',
+            detectedLang: 'unknown',
+            overQuote: 'true',
+          });
+        }
+      } finally {
+        incrementStub.restore();
+      }
+    });
+
+    it(`should reject malformed language tags without emitting language labels`, async () => {
+      const incrementStub = stub(monitor, 'increment');
+
+      try {
+        expect(await translatePost(post.id, mars, 'en-'), 'to satisfy', {
+          __httpCode: 422,
+          err: 'Invalid language tag',
+        });
+        expect(await translatePost(post.id, mars, 'a'.repeat(65)), 'to satisfy', {
+          __httpCode: 422,
+          err: 'Invalid language tag',
+        });
+        expect(capturedTranslationTags(incrementStub), 'to be empty');
+      } finally {
+        incrementStub.restore();
+      }
     });
   });
 });
@@ -280,6 +393,12 @@ function isTranslationResult(value) {
     'translatedText' in value &&
     'detectedLang' in value
   );
+}
+
+function capturedTranslationTags(incrementStub) {
+  return incrementStub.args
+    .filter(([name]) => name === 'translation-usage' || name === 'translation-requests')
+    .map(([, , tags]) => tags);
 }
 
 function translatePost(postId, userCtx, lang = null) {

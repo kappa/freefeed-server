@@ -12,8 +12,13 @@ import {
 } from '../../middlewares';
 import { type User, type Post, type Comment, dbAdapter } from '../../../models';
 import { type Ctx } from '../../../support/types';
-import { ForbiddenException, ServerErrorException } from '../../../support/exceptions';
+import {
+  ForbiddenException,
+  ServerErrorException,
+  ValidationException,
+} from '../../../support/exceptions';
 import { translate as translateText } from '../../../support/translation/translation';
+import { metricLanguage } from '../../../support/translation/metric-language';
 
 type TranslationResult = Awaited<ReturnType<typeof translateText>>;
 
@@ -92,8 +97,8 @@ export const getTranslatedBody = compose([
       ctx.body = result;
     } finally {
       const statTags = {
-        detectedLang: result?.detectedLang ?? '',
-        targetLang,
+        detectedLang: metricLanguage(result?.detectedLang),
+        targetLang: metricLanguage(targetLang),
         cacheHit: cacheHit ? 'true' : 'false',
         overQuote: overQuote ? 'true' : 'false',
       };
@@ -119,5 +124,18 @@ function getTargetLang(ctx: Ctx): string {
     lang = 'en';
   }
 
+  if (lang.length > 64 || !isWellFormedLanguageTag(lang)) {
+    throw new ValidationException('Invalid language tag');
+  }
+
   return lang;
+}
+
+function isWellFormedLanguageTag(lang: string): boolean {
+  try {
+    Intl.getCanonicalLocales(lang);
+    return true;
+  } catch {
+    return false;
+  }
 }
