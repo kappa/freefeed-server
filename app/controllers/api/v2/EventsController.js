@@ -5,7 +5,7 @@ import { dbAdapter } from '../../../models';
 import { ALLOWED_EVENT_TYPES, EVENT_TYPES as ET } from '../../../support/EventTypes';
 import { serializeEvents } from '../../../serializers/v2/event';
 import { authRequired } from '../../middlewares';
-import { NotFoundException } from '../../../support/exceptions';
+import { NotFoundException, ValidationException } from '../../../support/exceptions';
 
 const EVENT_GROUPS = {
   mentions: [ET.MENTION_IN_POST, ET.MENTION_IN_COMMENT, ET.MENTION_COMMENT_TO],
@@ -39,6 +39,8 @@ const EVENT_GROUPS = {
   directs: [ET.DIRECT_CREATED, ET.DIRECT_COMMENT_CREATED],
 };
 const DEFAULT_EVENTS_LIMIT = 30;
+const MAX_EVENTS_LIMIT = 100;
+const MAX_EVENTS_OFFSET = 10000;
 
 export default class EventsController {
   static async myEvents(ctx) {
@@ -97,8 +99,20 @@ export default class EventsController {
 }
 
 function getQueryParams(ctx) {
-  const offset = parseInt(ctx.request.query.offset, 10) || 0;
-  const limit = parseInt(ctx.request.query.limit, 10) || DEFAULT_EVENTS_LIMIT;
+  const offset = parsePaginationInt(
+    ctx.request.query.offset,
+    0,
+    MAX_EVENTS_OFFSET,
+    false,
+    'offset',
+  );
+  const limit = parsePaginationInt(
+    ctx.request.query.limit,
+    DEFAULT_EVENTS_LIMIT,
+    MAX_EVENTS_LIMIT,
+    true,
+    'limit',
+  );
   let eventGroups = ctx.request.query.filter || [];
 
   if (!Array.isArray(eventGroups)) {
@@ -134,4 +148,28 @@ function getQueryParams(ctx) {
     startDate,
     endDate,
   };
+}
+
+function parsePaginationInt(raw, fallback, cap, positive, name) {
+  if (raw === undefined) {
+    return fallback;
+  }
+
+  if (typeof raw !== 'string' || !/^[0-9]+$/.test(raw)) {
+    throw new ValidationException(`Invalid '${name}' value`);
+  }
+
+  const value = raw.replace(/^0+/, '') || '0';
+
+  if (positive && value === '0') {
+    throw new ValidationException(`Invalid '${name}' value`);
+  }
+
+  const maximum = String(cap);
+
+  if (value.length > maximum.length || (value.length === maximum.length && value > maximum)) {
+    return cap;
+  }
+
+  return Number(value);
 }

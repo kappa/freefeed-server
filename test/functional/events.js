@@ -2140,6 +2140,99 @@ describe('EventsController', () => {
       });
     });
 
+    describe('bounded pagination', () => {
+      beforeEach(async () => {
+        const promises = [];
+
+        for (let i = 0; i < 105; i++) {
+          promises.push(
+            dbAdapter.createEvent(
+              lunaUserModel.intId,
+              'banned_user',
+              lunaUserModel.intId,
+              marsUserModel.intId,
+            ),
+          );
+        }
+
+        await Promise.all(promises);
+      });
+
+      it('should cap huge limit at 100 events', async () => {
+        let res = await getUserEvents(luna, null, 1000);
+        expect(res['Notifications'], 'to be an array');
+        expect(res['Notifications'], 'to have length', 100);
+        expect(res, 'to satisfy', { isLastPage: false });
+
+        res = await getUserEvents(luna, null, 1000, 100);
+        expect(res['Notifications'], 'to be an array');
+        expect(res['Notifications'], 'to have length', 6);
+        expect(res, 'to satisfy', { isLastPage: true });
+      });
+
+      it('should keep exact last-page detection at the clamped boundary', async () => {
+        let res = await getUserEvents(luna, null, 100, 5);
+        expect(res['Notifications'], 'to be an array');
+        expect(res['Notifications'], 'to have length', 100);
+        expect(res, 'to satisfy', { isLastPage: false });
+
+        res = await getUserEvents(luna, null, 100, 6);
+        expect(res['Notifications'], 'to be an array');
+        expect(res['Notifications'], 'to have length', 100);
+        expect(res, 'to satisfy', { isLastPage: true });
+      });
+
+      it('should accept leading zeros in limit', async () => {
+        const res = await getUserEvents(luna, null, '010');
+        expect(res['Notifications'], 'to be an array');
+        expect(res['Notifications'], 'to have length', 10);
+        expect(res, 'to satisfy', { isLastPage: false });
+      });
+
+      it('should return 422 for malformed limit values', async () => {
+        for (const limit of ['0', '-1', '1x', '1e3', '']) {
+          // eslint-disable-next-line no-await-in-loop
+          const res = await performJSONRequest(
+            'GET',
+            `/v2/notifications?limit=${limit}`,
+            null,
+            authHeaders(luna),
+          );
+          expect(res, 'to satisfy', { __httpCode: 422 });
+        }
+      });
+
+      it('should return 422 for repeated limit values', async () => {
+        const res = await performJSONRequest(
+          'GET',
+          '/v2/notifications?limit=10&limit=20',
+          null,
+          authHeaders(luna),
+        );
+        expect(res, 'to satisfy', { __httpCode: 422 });
+      });
+
+      it('should return 422 for malformed offset values', async () => {
+        for (const offset of ['-1', '2x']) {
+          // eslint-disable-next-line no-await-in-loop
+          const res = await performJSONRequest(
+            'GET',
+            `/v2/notifications?offset=${offset}`,
+            null,
+            authHeaders(luna),
+          );
+          expect(res, 'to satisfy', { __httpCode: 422 });
+        }
+      });
+
+      it('should clamp huge offset to an empty last page', async () => {
+        const res = await getUserEvents(luna, null, 10, 20000);
+        expect(res['Notifications'], 'to be an array');
+        expect(res['Notifications'], 'to have length', 0);
+        expect(res, 'to satisfy', { isLastPage: true });
+      });
+    });
+
     describe('date filtering', () => {
       beforeEach(async () => {
         await dbAdapter.database('events').insert({
