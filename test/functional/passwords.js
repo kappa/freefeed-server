@@ -203,6 +203,8 @@ describe('PasswordsController', () => {
   });
 
   describe('Password reset sequence', () => {
+    withModifiedAppConfig({ passwordReset: { asyncEmail: true } });
+
     const email = 'luna@example.com';
     const newPassword = 'password1';
     let luna;

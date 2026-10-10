@@ -553,6 +553,7 @@ describe('Email verification', () => {
 
     describe(`Password reset`, () => {
       const emails = withEmailCapture({ multiple: true });
+      withModifiedAppConfig({ passwordReset: { asyncEmail: true } });
       // The worker resolves recipients outside the request, so it reads the
       // explicit config rather than the patched app config
       withModifiedConfig({ emailVerification: { enabled: true } });

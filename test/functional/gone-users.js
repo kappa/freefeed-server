@@ -32,6 +32,7 @@ import {
   promoteToAdmin,
   demoteFromAdmin,
   getUserEvents,
+  withModifiedAppConfig,
 } from './functional_test_helper';
 import Session from './realtime-session';
 
@@ -677,6 +678,8 @@ describe('Gone users', () => {
   });
 
   describe('Password reset', () => {
+    withModifiedAppConfig({ passwordReset: { asyncEmail: true } });
+
     const email = 'luna@example.com';
     beforeEach(async () => {
       const oUser = await dbAdapter.getUserById(luna.user.id);

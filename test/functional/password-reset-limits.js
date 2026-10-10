@@ -66,6 +66,7 @@ describe('Password reset limits', () => {
 
   withModifiedAppConfig({
     passwordReset: {
+      asyncEmail: true,
       rateLimit: {
         enabled: true,
         perIP: { count: 5, intervalSec: 3600 },
