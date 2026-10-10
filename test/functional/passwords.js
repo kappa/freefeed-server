@@ -1,4 +1,5 @@
 /* global $pg_database */
+import bcrypt from 'bcrypt';
 import expect from 'unexpected';
 import { simpleParser } from 'mailparser';
 import config from 'config';
@@ -132,12 +133,29 @@ describe('PasswordsController', () => {
       expect(resp, 'to satisfy', { __httpCode: 200 });
     });
 
+    it('should hash the recovered password with the configured bcrypt cost', async () => {
+      const reloaded = await dbAdapter.getUserById(luna.user.id);
+      expect(
+        bcrypt.getRounds(reloaded.hashedPassword),
+        'to equal',
+        config.performance.bcryptRounds,
+      );
+    });
+
     it('should allow to log in with the new password', async () => {
       const resp = await performJSONRequest('POST', `/v1/session`, {
         username: luna.username,
         password: newPassword,
       });
       expect(resp, 'to satisfy', { __httpCode: 200 });
+    });
+
+    it('should not allow to log in with the old password', async () => {
+      const resp = await performJSONRequest('POST', `/v1/session`, {
+        username: luna.username,
+        password: 'password',
+      });
+      expect(resp, 'to satisfy', { __httpCode: 401 });
     });
 
     it('should not allow to use same token again', async () => {

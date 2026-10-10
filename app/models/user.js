@@ -660,7 +660,7 @@ export function addModel(dbAdapter) {
       const updatedAt = new Date().getTime();
       const payload = {
         updatedAt: updatedAt.toString(),
-        hashedPassword: await bcrypt.hash(password, 10),
+        hashedPassword: await bcrypt.hash(password, config.performance.bcryptRounds),
       };
 
       await dbAdapter.updateUser(this.id, payload);

@@ -1,6 +1,8 @@
 /* eslint-disable @typescript-eslint/no-unused-expressions */
 /* global $pg_database, $should */
+import bcrypt from 'bcrypt';
 import { expect } from 'chai';
+import config from 'config';
 
 import cleanDB from '../../../dbCleaner';
 import { dbAdapter, Post, Timeline, User } from '../../../../app/models';
@@ -43,6 +45,63 @@ describe('User', () => {
         .catch((e) => {
           done(e);
         });
+    });
+  });
+
+  describe('#updatePassword()', () => {
+    it('should hash created and updated passwords with the configured bcrypt cost', async () => {
+      const user = new User({ username: 'Luna', password: 'password' });
+
+      await user.create();
+
+      expect(bcrypt.getRounds(user.hashedPassword)).to.equal(config.performance.bcryptRounds);
+
+      await user.updatePassword('new-valid-password', 'new-valid-password');
+
+      const reloaded = await dbAdapter.getUserById(user.id);
+      expect(bcrypt.getRounds(reloaded.hashedPassword)).to.equal(config.performance.bcryptRounds);
+      expect(await reloaded.validPassword('new-valid-password')).to.equal(true);
+      expect(await reloaded.validPassword('password')).to.equal(false);
+    });
+
+    it('should not change the stored hash when confirmation does not match', async () => {
+      const user = new User({ username: 'Luna', password: 'password' });
+
+      await user.create();
+
+      const { hashedPassword } = user;
+
+      try {
+        await user.updatePassword('new-valid-password', 'other-password');
+      } catch (e) {
+        expect(e.message).to.equal('Passwords do not match');
+
+        const reloaded = await dbAdapter.getUserById(user.id);
+        expect(reloaded.hashedPassword).to.equal(hashedPassword);
+        return;
+      }
+
+      throw new Error('FAIL');
+    });
+
+    it('should not change the stored hash when password is blank', async () => {
+      const user = new User({ username: 'Luna', password: 'password' });
+
+      await user.create();
+
+      const { hashedPassword } = user;
+
+      try {
+        await user.updatePassword('', '');
+      } catch (e) {
+        expect(e.message).to.equal('Password cannot be blank');
+
+        const reloaded = await dbAdapter.getUserById(user.id);
+        expect(reloaded.hashedPassword).to.equal(hashedPassword);
+        return;
+      }
+
+      throw new Error('FAIL');
     });
   });
 
