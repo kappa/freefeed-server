@@ -28,6 +28,8 @@ import { List, type ListLike } from '../open-lists';
 import { type UserStats } from './user-stats-dynamic';
 import {
   type RegisterOptions as TranslationRegisterOptions,
+  type ReserveOptions as TranslationReserveOptions,
+  type ReserveResult as TranslationReserveResult,
   type UsageOptions as TranslationUsageOptions,
 } from './translation-usage';
 import { notificationsDigestRecipientSchema } from './users';
@@ -508,6 +510,7 @@ export class DbAdapter {
   // Translation usage
   registerTranslationUsage(options: TranslationRegisterOptions): Promise<void>;
   getTranslationUsage(options: TranslationUsageOptions): Promise<number>;
+  reserveTranslationUsage(options: TranslationReserveOptions): Promise<TranslationReserveResult>;
   cleanOldTranslationUsageData(now?: ISO8601DateTimeString | 'now'): Promise<void>;
 
   getCommentEventsStatusForPosts(

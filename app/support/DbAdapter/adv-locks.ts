@@ -6,6 +6,7 @@ export type LockType = Branded<number, 'advisoryLockType'>;
 
 export const USER_SUBSCRIPTIONS: LockType = 10001;
 export const JOBS_FETCH: LockType = 10002;
+export const TRANSLATION_USAGE: LockType = 10003;
 
 export async function advisoryLock(trx: Knex.Transaction, lockType: LockType) {
   await trx.raw(`select pg_advisory_xact_lock(:lockType)`, { lockType });

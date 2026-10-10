@@ -2,7 +2,6 @@ import { createHash } from 'crypto';
 
 import monitor from 'monitor-dog';
 import compose from 'koa-compose';
-import { type TranslationLimits } from 'config';
 import { type Context } from 'koa';
 
 import {
@@ -12,7 +11,7 @@ import {
   postAccessRequired,
 } from '../../middlewares';
 import { type User, type Post, type Comment, dbAdapter } from '../../../models';
-import { type Ctx, type UUID } from '../../../support/types';
+import { type Ctx } from '../../../support/types';
 import { ForbiddenException, ServerErrorException } from '../../../support/exceptions';
 import { translate as translateText } from '../../../support/translation/translation';
 
@@ -67,7 +66,17 @@ export const getTranslatedBody = compose([
       if (!result) {
         cacheHit = false;
 
-        if (await isOverQuote(ctx.config.translation.limits, user.id)) {
+        // Charge text.length (UTF-16 code units) against the approximate
+        // sliding-window budgets before calling the provider. A denied
+        // reservation charges nothing; an allowed one stays charged even if
+        // the provider call or caching fails below (no refunds).
+        const reservation = await dbAdapter.reserveTranslationUsage({
+          userId: user.id,
+          characters: text.length,
+          limits: ctx.config.translation.limits,
+        });
+
+        if (!reservation.allowed) {
           overQuote = true;
           throw new ForbiddenException(
             'You have reached the limit of allowed translations. Please try again later.',
@@ -76,17 +85,8 @@ export const getTranslatedBody = compose([
 
         result = await translateText(text, targetLang, ctx.config);
 
-        await Promise.all([
-          // Save the translation in the cache
-          dbAdapter.cache.set(cacheKey, result),
-          // Update usage data
-          dbAdapter.registerTranslationUsage({ period: 'month', characters: text.length }),
-          dbAdapter.registerTranslationUsage({
-            period: 'day',
-            userId: user.id,
-            characters: text.length,
-          }),
-        ]);
+        // Save the translation in the cache
+        await dbAdapter.cache.set(cacheKey, result);
       }
 
       ctx.body = result;
@@ -103,17 +103,6 @@ export const getTranslatedBody = compose([
     }
   },
 ]);
-
-async function isOverQuote(limits: TranslationLimits, userId: UUID): Promise<boolean> {
-  const [allUsedChars, userUsedChars] = await Promise.all([
-    dbAdapter.getTranslationUsage({ period: 'month' }),
-    dbAdapter.getTranslationUsage({ period: 'day', userId }),
-  ]);
-
-  return (
-    allUsedChars > limits.totalCharactersPerMonth || userUsedChars > limits.userCharactersPerDay
-  );
-}
 
 function getTargetLang(ctx: Ctx): string {
   let { lang } = ctx.request.query;
