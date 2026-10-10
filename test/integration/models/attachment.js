@@ -6,6 +6,7 @@ import { v4 as createUuid } from 'uuid';
 import { before, beforeEach, describe, it } from 'mocha';
 import expect from 'unexpected';
 import { lookup as mimeLookup } from 'mime-types';
+import contentDisposition from 'content-disposition';
 
 import cleanDB from '../../dbCleaner';
 import { dbAdapter, Attachment } from '../../../app/models';
@@ -490,6 +491,71 @@ describe('Attachments', () => {
         expect(fakeS3Storage.get(att.getRelFilePath('p1')), 'to satisfy', {
           ContentDisposition: expect.it('to start with', 'inline; filename="TEST.webp"'),
         });
+      });
+
+      it('should store a parseable content-disposition for filenames with quotes', async () => {
+        const content = 'Test hostile file';
+        const fileName = 'we"ird.txt';
+        const path = await createTempFile(content);
+
+        const att = await Attachment.create(path, fileName, user);
+        const { ContentDisposition } = fakeS3Storage.get(att.getRelFilePath(''));
+
+        expect(ContentDisposition, 'not to contain', '\r');
+        expect(ContentDisposition, 'not to contain', '\n');
+
+        const parsed = contentDisposition.parse(ContentDisposition);
+        expect(parsed.type, 'to be', 'inline');
+        expect(parsed.parameters.filename, 'to be', 'we"ird.txt');
+      });
+    });
+
+    describe('Content-Disposition filename encoding', () => {
+      // getContentDisposition only uses its argument and the media config,
+      // so a bare instance is enough to probe it.
+      const probe = new Attachment({ fileName: 'probe' });
+
+      // [title, input, expected sanitized basename, expected disposition type]
+      const cases = [
+        ['plain ASCII attachment name', 'test', 'test', 'attachment'],
+        ['plain ASCII inline name', 'report.pdf', 'report.pdf', 'inline'],
+        ['Unicode name', 'файл.pdf', 'файл.pdf', 'inline'],
+        ['name with double quote', 'evil".pdf', 'evil".pdf', 'inline'],
+        ['name with quote, attachment MIME', 'evil".exe', 'evil".exe', 'attachment'],
+        ['CR in name', 'a\rb.pdf', 'a_b.pdf', 'inline'],
+        ['LF in name', 'a\nb.pdf', 'a_b.pdf', 'inline'],
+        ['CRLF in name', 'a\r\nb.pdf', 'a__b.pdf', 'inline'],
+        ['NUL in name', 'a\0b.pdf', 'a_b.pdf', 'inline'],
+        ['POSIX path components', '../../etc/passwd', 'passwd', 'attachment'],
+        ['nested POSIX path', 'dir/sub/file.pdf', 'file.pdf', 'inline'],
+        ['Windows path components', '..\\..\\secret.pdf', 'secret.pdf', 'inline'],
+        ['drive-letter path', 'C:\\docs\\x.pdf', 'x.pdf', 'inline'],
+        ['backslash inside name', 'a\\b.pdf', 'b.pdf', 'inline'],
+        ['empty name', '', 'file', 'attachment'],
+        ['root-only path', '/', 'file', 'attachment'],
+      ];
+
+      for (const [title, input, expectedName, expectedType] of cases) {
+        it(`should encode ${title}`, () => {
+          const header = probe.getContentDisposition(input);
+
+          expect(header, 'not to contain', '\r');
+          expect(header, 'not to contain', '\n');
+
+          const parsed = contentDisposition.parse(header);
+          expect(parsed.type, 'to be', expectedType);
+          expect(parsed.parameters.filename, 'to be', expectedName);
+        });
+      }
+
+      it('should preserve Unicode via filename* with an ASCII-only fallback', () => {
+        const header = probe.getContentDisposition('файл.pdf');
+
+        expect(header, 'to contain', 'filename*=');
+
+        const m = header.match(/filename="([^"]*)"/);
+        expect(m, 'not to be null');
+        expect(m[1], 'to match', /^[\x20-\x7e]*$/);
       });
     });
   });

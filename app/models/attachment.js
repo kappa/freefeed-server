@@ -5,6 +5,7 @@ import util from 'util';
 import os from 'os';
 
 import createDebug from 'debug';
+import contentDisposition from 'content-disposition';
 import mime, { lookup } from 'mime-types';
 import mv from 'mv';
 import Raven from 'raven';
@@ -482,19 +483,24 @@ export function addModel(dbAdapter) {
     getContentDisposition(dispositionName) {
       const mimeType = mime.lookup(dispositionName) || 'application/octet-stream';
 
-      // Old browsers (IE8) need ASCII-only fallback filenames
-      // eslint-disable-next-line no-control-regex
-      const fileNameAscii = dispositionName.replace(/[^\x00-\x7F]/g, '_');
-
-      // Modern browsers support UTF-8 filenames
-      const fileNameUtf8 = encodeURIComponent(dispositionName);
-
       const disposition = currentConfig().media.inlineMimeTypes.includes(mimeType)
         ? 'inline'
         : 'attachment';
 
-      // Inline version of 'attfnboth' method (http://greenbytes.de/tech/tc2231/#attfnboth)
-      return `${disposition}; filename="${fileNameAscii}"; filename*=utf-8''${fileNameUtf8}`;
+      // Use only the final path segment (POSIX or Windows separators) and
+      // replace control characters, so the header never carries raw quotes,
+      // path components or CR/LF. The encoder emits a quoted ASCII fallback
+      // plus a UTF-8 filename* parameter ('attfnboth' method,
+      // http://greenbytes.de/tech/tc2231/#attfnboth).
+      const filename =
+        dispositionName
+          .split(/[\\/]/)
+          .pop()
+          // eslint-disable-next-line no-control-regex
+          .replace(/[\x00-\x1f\x7f]/g, '_') || 'file';
+      const fallback = filename.replace(/[^\x20-\x7e]/g, '_');
+
+      return contentDisposition(filename, { type: disposition, fallback });
     }
 
     /**
