@@ -12,6 +12,7 @@ import {
   ACT_SUSPEND_USER,
   ACT_UNFREEZE_USER,
   ACT_UNSUSPEND_USER,
+  ROLE_ADMIN,
 } from '../../../models/admins';
 import { GONE_SUSPENDED } from '../../../models/user';
 
@@ -57,6 +58,12 @@ export const freezeUser = compose([
 
     if (!targetUser.isUser()) {
       throw new ForbiddenException('Only user can be frozen');
+    }
+
+    const targetRoles = await dbAdapter.getUserAdminRoles(targetUser.id);
+
+    if (targetRoles.includes(ROLE_ADMIN)) {
+      throw new ForbiddenException('Site administrators cannot be frozen or suspended.');
     }
 
     const { freezeUntil } = ctx.request.body as { freezeUntil: string };
@@ -128,6 +135,14 @@ export const suspendUser = (doSuspend: boolean) =>
 
       if (!targetUser.isUser()) {
         throw new ForbiddenException('Only user can be suspended');
+      }
+
+      if (doSuspend) {
+        const targetRoles = await dbAdapter.getUserAdminRoles(targetUser.id);
+
+        if (targetRoles.includes(ROLE_ADMIN)) {
+          throw new ForbiddenException('Site administrators cannot be frozen or suspended.');
+        }
       }
 
       if (doSuspend && targetUser.goneStatus !== null) {

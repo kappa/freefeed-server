@@ -3,7 +3,7 @@ import unexpected from 'unexpected';
 import unexpectedDate from 'unexpected-date';
 import { DateTime } from 'luxon';
 
-import { dbAdapter } from '../../app/models';
+import { PubSub, dbAdapter } from '../../app/models';
 import cleanDB from '../dbCleaner';
 import {
   ACT_DISABLE_INVITES_FOR_USER,
@@ -17,6 +17,7 @@ import {
   ROLE_ADMIN,
   ROLE_MODERATOR,
 } from '../../app/models/admins';
+import { GONE_SUSPENDED } from '../../app/models/user';
 
 import {
   type UserCtx,
@@ -608,6 +609,309 @@ describe('Admin API', () => {
         authHeaders(mars),
       );
       await expect(response, 'to satisfy', { __httpCode: 422 });
+    });
+  });
+
+  describe('Site administrator target policy', () => {
+    const policyErr = 'Site administrators cannot be frozen or suspended.';
+
+    const getLatestActionId = async () => {
+      const journal = await performJSONRequest(
+        'GET',
+        `/api/admin/journal?limit=1`,
+        null,
+        authHeaders(mars),
+      );
+      await expect(journal, 'to satisfy', { __httpCode: 200 });
+      const { actions } = journal as { actions?: { id: string }[] };
+      return actions?.[0]?.id ?? null;
+    };
+
+    it(`should still deny freeze/suspend to ordinary users (existing authorization)`, async () => {
+      const freezeResp = await performJSONRequest(
+        'POST',
+        `/api/admin/users/${mars.username}/freeze`,
+        { freezeUntil: 'P1D' },
+        authHeaders(venus),
+      );
+      await expect(freezeResp, 'to satisfy', { __httpCode: 403 });
+      const suspendResp = await performJSONRequest(
+        'POST',
+        `/api/admin/users/${venus.username}/suspend`,
+        null,
+        authHeaders(venus),
+      );
+      await expect(suspendResp, 'to satisfy', { __httpCode: 403 });
+    });
+
+    it(`should not let a moderator freeze a site administrator via direct request`, async () => {
+      const journalIdBefore = await getLatestActionId();
+
+      let response: unknown = null;
+      let info: unknown = null;
+      let journalIdAfter: unknown = null;
+      let whoami: unknown = null;
+
+      try {
+        response = await performJSONRequest(
+          'POST',
+          `/api/admin/users/${luna.username}/freeze`,
+          { freezeUntil: 'P1D' },
+          authHeaders(mars),
+        );
+        info = await getUserInfo(luna, mars);
+        journalIdAfter = await getLatestActionId();
+        whoami = await performJSONRequest('GET', `/api/admin/whoami`, null, authHeaders(luna));
+      } finally {
+        // Restore pre-test state when the guard is absent (RED); audit-free model call
+        await luna.user.freeze('P0D');
+      }
+
+      await expect(response, 'to satisfy', { __httpCode: 403, err: policyErr });
+      await expect(info, 'to satisfy', { __httpCode: 200, user: { frozenUntil: null } });
+      await expect(journalIdAfter, 'to be', journalIdBefore);
+      await expect(whoami, 'to satisfy', { __httpCode: 200, user: { id: luna.user.id } });
+    });
+
+    it(`should not let a moderator suspend a site administrator via direct request`, async () => {
+      const journalIdBefore = await getLatestActionId();
+      const { globalUserUpdate } = PubSub;
+      let userUpdates = 0;
+      PubSub.globalUserUpdate = (async (...args: Parameters<typeof globalUserUpdate>) => {
+        userUpdates += 1;
+        await globalUserUpdate.apply(PubSub, args);
+      }) as typeof globalUserUpdate;
+
+      let response: unknown = null;
+      let info: unknown = null;
+      let journalIdAfter: unknown = null;
+
+      try {
+        response = await performJSONRequest(
+          'POST',
+          `/api/admin/users/${luna.username}/suspend`,
+          null,
+          authHeaders(mars),
+        );
+        info = await getUserInfo(luna, mars);
+        journalIdAfter = await getLatestActionId();
+      } finally {
+        PubSub.globalUserUpdate = globalUserUpdate;
+        // Restore pre-test state when the guard is absent (RED); publishes outside the spy window
+        await luna.user.setGoneStatus(null);
+      }
+
+      await expect(response, 'to satisfy', { __httpCode: 403, err: policyErr });
+      await expect(info, 'to satisfy', { __httpCode: 200, user: { goneStatus: 'ACTIVE' } });
+      await expect(journalIdAfter, 'to be', journalIdBefore);
+      await expect(userUpdates, 'to be', 0);
+    });
+
+    it(`should still let a moderator freeze and suspend another moderator`, async () => {
+      await dbAdapter.setUserAdminRole(venus.user.id, ROLE_MODERATOR, true);
+
+      const freezeResp = await performJSONRequest(
+        'POST',
+        `/api/admin/users/${venus.username}/freeze`,
+        { freezeUntil: 'P1D' },
+        authHeaders(mars),
+      );
+      await expect(freezeResp, 'to satisfy', { __httpCode: 200 });
+      await expect(await getUserInfo(venus, mars), 'to satisfy', {
+        __httpCode: 200,
+        user: { frozenUntil: expect.it('to be a string') },
+      });
+
+      const unfreezeResp = await performJSONRequest(
+        'POST',
+        `/api/admin/users/${venus.username}/unfreeze`,
+        null,
+        authHeaders(mars),
+      );
+      await expect(unfreezeResp, 'to satisfy', { __httpCode: 200 });
+
+      const suspendResp = await performJSONRequest(
+        'POST',
+        `/api/admin/users/${venus.username}/suspend`,
+        null,
+        authHeaders(mars),
+      );
+      await expect(suspendResp, 'to satisfy', { __httpCode: 200 });
+      await expect(await getUserInfo(venus, mars), 'to satisfy', {
+        __httpCode: 200,
+        user: { goneStatus: 'SUSPENDED' },
+      });
+
+      const unsuspendResp = await performJSONRequest(
+        'POST',
+        `/api/admin/users/${venus.username}/unsuspend`,
+        null,
+        authHeaders(mars),
+      );
+      await expect(unsuspendResp, 'to satisfy', { __httpCode: 200 });
+      await expect(await getLatestActionId(), 'not to be', null);
+    });
+
+    it(`should not let an admin+moderator freeze or suspend a site administrator, including self`, async () => {
+      await dbAdapter.setUserAdminRole(mars.user.id, ROLE_ADMIN, true, {
+        YES_I_WANT_TO_SET_ADMIN_FOR_TEST_ONLY: true,
+      });
+
+      const journalIdBefore = await getLatestActionId();
+
+      let freezeLuna: unknown = null;
+      let suspendLuna: unknown = null;
+      let freezeSelf: unknown = null;
+      let suspendSelf: unknown = null;
+      let lunaInfo: unknown = null;
+      let marsInfo: unknown = null;
+      let journalIdAfter: unknown = null;
+
+      try {
+        freezeLuna = await performJSONRequest(
+          'POST',
+          `/api/admin/users/${luna.username}/freeze`,
+          { freezeUntil: 'P1D' },
+          authHeaders(mars),
+        );
+        suspendLuna = await performJSONRequest(
+          'POST',
+          `/api/admin/users/${luna.username}/suspend`,
+          null,
+          authHeaders(mars),
+        );
+        freezeSelf = await performJSONRequest(
+          'POST',
+          `/api/admin/users/${mars.username}/freeze`,
+          { freezeUntil: 'P1D' },
+          authHeaders(mars),
+        );
+        suspendSelf = await performJSONRequest(
+          'POST',
+          `/api/admin/users/${mars.username}/suspend`,
+          null,
+          authHeaders(mars),
+        );
+
+        lunaInfo = await getUserInfo(luna, mars);
+        marsInfo = await getUserInfo(mars, mars);
+        // Raw read: the actor may lock itself out when the guard is absent (RED)
+        const journalAfter = await performJSONRequest(
+          'GET',
+          `/api/admin/journal?limit=1`,
+          null,
+          authHeaders(mars),
+        );
+        const { actions } = journalAfter as { actions?: { id: string }[] };
+        journalIdAfter = actions?.[0]?.id ?? null;
+      } finally {
+        // Restore pre-test state when the guard is absent (RED); audit-free model calls
+        await luna.user.freeze('P0D');
+        await mars.user.freeze('P0D');
+        await luna.user.setGoneStatus(null);
+        await mars.user.setGoneStatus(null);
+      }
+
+      await expect(freezeLuna, 'to satisfy', { __httpCode: 403, err: policyErr });
+      await expect(suspendLuna, 'to satisfy', { __httpCode: 403, err: policyErr });
+      await expect(freezeSelf, 'to satisfy', { __httpCode: 403, err: policyErr });
+      await expect(suspendSelf, 'to satisfy', { __httpCode: 403, err: policyErr });
+
+      await expect(lunaInfo, 'to satisfy', {
+        __httpCode: 200,
+        user: { frozenUntil: null, goneStatus: 'ACTIVE' },
+      });
+      await expect(marsInfo, 'to satisfy', {
+        __httpCode: 200,
+        user: { frozenUntil: null, goneStatus: 'ACTIVE' },
+      });
+      await expect(journalIdAfter, 'to be', journalIdBefore);
+    });
+
+    it(`should still let a moderator unfreeze a previously locked administrator`, async () => {
+      await luna.user.freeze('P1D');
+      await expect(await luna.user.isFrozen(), 'to be true');
+
+      const response = await performJSONRequest(
+        'POST',
+        `/api/admin/users/${luna.username}/unfreeze`,
+        null,
+        authHeaders(mars),
+      );
+      await expect(response, 'to satisfy', { __httpCode: 200 });
+      await expect(await getUserInfo(luna, mars), 'to satisfy', {
+        __httpCode: 200,
+        user: { frozenUntil: null },
+      });
+      const journal = await performJSONRequest(
+        'GET',
+        `/api/admin/journal?limit=1`,
+        null,
+        authHeaders(mars),
+      );
+      await expect(journal, 'to satisfy', {
+        __httpCode: 200,
+        actions: [
+          {
+            action_name: ACT_UNFREEZE_USER,
+            admin_username: mars.username,
+            target_username: luna.username,
+          },
+        ],
+      });
+    });
+
+    it(`should still let a moderator unsuspend a previously locked administrator`, async () => {
+      await luna.user.setGoneStatus(GONE_SUSPENDED);
+      await expect(await getUserInfo(luna, mars), 'to satisfy', {
+        __httpCode: 200,
+        user: { goneStatus: 'SUSPENDED' },
+      });
+
+      const response = await performJSONRequest(
+        'POST',
+        `/api/admin/users/${luna.username}/unsuspend`,
+        null,
+        authHeaders(mars),
+      );
+      await expect(response, 'to satisfy', { __httpCode: 200 });
+      await expect(await getUserInfo(luna, mars), 'to satisfy', {
+        __httpCode: 200,
+        user: { goneStatus: 'ACTIVE' },
+      });
+      const journal = await performJSONRequest(
+        'GET',
+        `/api/admin/journal?limit=1`,
+        null,
+        authHeaders(mars),
+      );
+      await expect(journal, 'to satisfy', {
+        __httpCode: 200,
+        actions: [
+          {
+            action_name: ACT_UNSUSPEND_USER,
+            admin_username: mars.username,
+            target_username: luna.username,
+          },
+        ],
+      });
+    });
+
+    it(`should keep invite restrictions for administrators unchanged`, async () => {
+      const disableResp = await performJSONRequest(
+        'POST',
+        `/api/admin/users/${luna.username}/disable-invites`,
+        null,
+        authHeaders(mars),
+      );
+      await expect(disableResp, 'to satisfy', { __httpCode: 200 });
+      const enableResp = await performJSONRequest(
+        'POST',
+        `/api/admin/users/${luna.username}/enable-invites`,
+        null,
+        authHeaders(mars),
+      );
+      await expect(enableResp, 'to satisfy', { __httpCode: 200 });
     });
   });
 });
